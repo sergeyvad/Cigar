@@ -752,7 +752,7 @@
         var sectorHeight = height / sectorCount;
         var sectorNameSize = Math.min(sectorWidth, sectorHeight) / 3;
 
-        mainCtx.fillStyle = "#666";
+        mainCtx.fillStyle = settings.darkTheme ? "#666" : "#DDD";
         mainCtx.textBaseline = "middle";
         mainCtx.textAlign = "center";
         mainCtx.font = `${sectorNameSize}px Ubuntu`;
@@ -772,6 +772,21 @@
         mainCtx.arc(myPosX, myPosY, 5, 0, PI_2, false);
         mainCtx.closePath();
         mainCtx.fill();
+
+        // draw name above user's pos if he has a cell on the screen 
+        var cell = null;
+        for (var i = 0, l = cells.mine.length; i < l; i++)
+            if (cells.byId.hasOwnProperty(cells.mine[i])) {
+                cell = cells.byId[cells.mine[i]];
+                break;
+            }
+        if (cell !== null) {
+            mainCtx.fillStyle = settings.darkTheme ? "#DDD" : "#222";
+            var textSize = sectorNameSize;
+            mainCtx.font = `${textSize}px Ubuntu`;
+            mainCtx.fillText(cell.name, myPosX, myPosY - 7 - textSize / 2);
+        }
+
         mainCtx.restore();
     }
 
