@@ -654,7 +654,7 @@
 
     function drawLeaderboard() {
         if (leaderboard.type === NaN) return leaderboard.visible = false;
-        if (leaderboard.items.length === 0 || !settings.showNames)
+        if (!settings.showNames || leaderboard.items.length === 0)
             return leaderboard.visible = false;
         leaderboard.visible = true;
         var canvas = leaderboard.canvas;
