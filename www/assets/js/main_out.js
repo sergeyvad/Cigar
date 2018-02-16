@@ -834,7 +834,7 @@
                 leaderboard.canvas,
                 mainCanvas.width / viewMult - 10 - leaderboard.canvas.width,
                 10);
-        if (chat.visible || isTyping || true) {
+        if (chat.visible || isTyping) {
             mainCtx.globalAlpha = isTyping ? 1 : Math.max(1000 - syncAppStamp + chat.waitUntil, 0) / 1000;
             mainCtx.drawImage(
                 chat.canvas,
