@@ -340,7 +340,7 @@
                     cameraZ = targetZ = 1;
                 }
                 reader.getUint32(); // game type
-                if (!/MultiOgar/.test(reader.getStringUTF8()) || stats.pingLoopId) break;
+                if (!/MultiOgar|OgarII/.test(reader.getStringUTF8()) || stats.pingLoopId) break;
                 stats.pingLoopId = setInterval(function() {
                     wsSend(UINT8_CACHE[254]);
                     stats.pingLoopStamp = Date.now();
