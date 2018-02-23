@@ -170,8 +170,6 @@
         log.debug("ws cleanup trigger");
         ws.onopen = null;
         ws.onmessage = null;
-        ws.onerror = null;
-        ws.onclose = null;
         ws.close();
         ws = null;
     }
