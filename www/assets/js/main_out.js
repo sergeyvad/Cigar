@@ -151,18 +151,21 @@
         SKIN_URL = "./skins/",
         USE_HTTPS = "https:" == wHandle.location.protocol,
         PI_2 = Math.PI * 2,
-        SEND_254 = new Uint8Array([254, 6, 0, 0, 0]),
-        SEND_255 = new Uint8Array([255, 1, 0, 0, 0]),
+        SEND_1 = new Uint8Array([1, 1, 0, 0, 0]),
         UINT8_CACHE = {
-            1: new Uint8Array([1]),
-            17: new Uint8Array([17]),
-            21: new Uint8Array([21]),
-            18: new Uint8Array([18]),
-            19: new Uint8Array([19]),
-            22: new Uint8Array([22]),
-            23: new Uint8Array([23]),
-            24: new Uint8Array([24]),
-            254: new Uint8Array([254])
+            2: new Uint8Array([2]),
+        },
+        sending = {
+            spawningName: null,
+            spectate: false,
+            qPress: false,
+            qRelease: false,
+            eject: false,
+            minionEject: false,
+            minionFreeze: false,
+            split: 0,
+            minionSplit: 0,
+            chatMessages: []
         };
 
     function wsCleanup() {
@@ -189,8 +192,7 @@
     function wsOpen() {
         disconnectDelay = 1000;
         wjQuery("#connecting").hide();
-        wsSend(SEND_254);
-        wsSend(SEND_255);
+        wsSend(SEND_1);
         log.debug(`ws connected, using https: ${USE_HTTPS}`);
     }
     function wsError(error) {
@@ -216,195 +218,201 @@
         var reader = new Reader(new DataView(data.data), 0, true);
         var packetId = reader.getUint8();
         switch (packetId) {
-            case 0x10: // update nodes
-                var killer, killed, id, node, x, y, s, flags, cell,
-                    updColor, updName, updSkin, count, color, name, skin;
-
-                // consume records
-                count = reader.getUint16();
-                for (var i = 0; i < count; i++) {
-                    killer = reader.getUint32();
-                    killed = reader.getUint32();
-                    if (!cells.byId.hasOwnProperty(killer) || !cells.byId.hasOwnProperty(killed))
-                        continue;
-                    cells.byId[killed].destroy(killer);
+            case 0x02:
+                stats.latency = syncUpdStamp - stats.pingLoopStamp;
+                break;
+            case 0x03:
+                var globalFlags, i, l, flags, item, killer, killed, id, type, x, y, s, color, name, skin;
+                globalFlags = reader.getUint16();
+                if (globalFlags & 1) {
+                    targetX = reader.getInt32();
+                    targetY = reader.getInt32();
+                    targetZ = reader.getFloat32();
                 }
-
-                // update records
-                while (true) {
-                    id = reader.getUint32();
-                    if (id === 0) break;
-
+                if (globalFlags & 2) {
+                    border.left = reader.getInt32();
+                    border.right = reader.getInt32();
+                    border.top = reader.getInt32();
+                    border.bottom = reader.getInt32();
+                    if (!mapCenterSet) {
+                        mapCenterSet = true;
+                        cameraX = targetX = border.centerX;
+                        cameraY = targetY = border.centerY;
+                        cameraZ = targetZ = 1;
+                    }
+                }
+                if (globalFlags & 4) {
+                    reader.getUint8();
+                    reader.getUint8();
+                    reader.getUint8();
+                    reader.getUint8();
+                    stats.pingLoopId = stats.pingLoopId || setInterval(function() {
+                        wsSend(UINT8_CACHE[2]);
+                        stats.pingLoopStamp = Date.now();
+                    }, 2000);
+                }
+                if (globalFlags & 8) {
+                    stats.info = {
+                        name: reader.getStringUTF8(),
+                        gamemode: reader.getStringUTF8(),
+                        loadTime: reader.getFloat32(),
+                        uptime: reader.getUint32(),
+                        limit: reader.getUint16(),
+                        external: reader.getUint16(),
+                        internal: reader.getUint16(),
+                        playing: reader.getUint16(),
+                        spectating: reader.getUint16()
+                    };
+                    drawStats();
+                }
+                if (globalFlags & 16) {
+                    l = reader.getUint16();
+                    for (i = 0; i < l; i++) {
+                        name = reader.getStringUTF8().trim();
+                        color = bytesToColor(reader.getUint8(), reader.getUint8(), reader.getUint8());
+                        flags = reader.getUint8();
+                        var message = reader.getStringUTF8();
+                        
+                        var wait = Math.max(3000, 1000 + message.length * 150);
+                        chat.waitUntil = syncUpdStamp - chat.waitUntil > 1000 ? syncUpdStamp + wait : chat.waitUntil + wait;
+                       
+                        chat.messages.push({
+                            server: !!(flags & 1),
+                            color: color,
+                            name: name,
+                            message: message,
+                            time: syncUpdStamp
+                        });
+                        drawChat();
+                    }
+                }
+                if (globalFlags & 32) {
+                    leaderboard.items.splice(0, leaderboard.items.length);
+                    switch (reader.getUint8()) {
+                        case 1:
+                            leaderboard.type = "ffa";
+                            var hitSelfData = false, position;
+                            while ((position = reader.getUint16()) !== 0) {
+                                flags = reader.getUint8();
+                                if (flags & 2) hitSelfData = true;
+                                leaderboard.items.push({
+                                    me: !!(flags & 1),
+                                    pos: position,
+                                    name: reader.getStringUTF8()
+                                });
+                            }
+                            if (!hitSelfData)
+                                leaderboard.items.push({
+                                    pos: reader.getStringUTF8(),
+                                    me: !!(reader.getUint8() & 1),
+                                    name: reader.getStringUTF8()
+                                });
+                            break;
+                        case 2:
+                            leaderboard.type = "pie";
+                            l = reader.getUint16();
+                            for (i = 0; i < l; i++) leaderboard.items.push(reader.getFloat32());
+                            break;
+                        case 3:
+                            leaderboard.type = "text";
+                            l = reader.getUint16();
+                            for (i = 0; i < l; i++) leaderboard.items.push(reader.getStringUTF8());
+                            break;
+                    }
+                    drawLeaderboard();
+                }
+                while (globalFlags & 64 && (id = reader.getUint32()) !== 0) {
+                    type = reader.getUint8();
                     x = reader.getInt32();
                     y = reader.getInt32();
                     s = reader.getUint16();
-
+                    color = bytesToColor(reader.getUint8(), reader.getUint8(), reader.getUint8());
                     flags = reader.getUint8();
-                    updColor = !!(flags & 0x02);
-                    updName = !!(flags & 0x08);
-                    updSkin = !!(flags & 0x04);
-                    color = updColor ? bytesToColor(reader.getUint8(), reader.getUint8(), reader.getUint8()) : null;
-                    skin = updSkin ? reader.getStringUTF8() : null;
-                    name = updName ? reader.getStringUTF8() : null;
-
-                    if (cells.byId.hasOwnProperty(id)) {
-                        cell = cells.byId[id];
-                        cell.update(syncUpdStamp);
-                        cell.updated = syncUpdStamp;
-                        cell.ox = cell.x;
-                        cell.oy = cell.y;
-                        cell.os = cell.s;
-                        cell.nx = x;
-                        cell.ny = y;
-                        cell.ns = s;
-                        if (color) cell.setColor(color);
-                        if (skin) cell.setSkin(skin);
-                        if (name) cell.setName(name);
-                    } else {
-                        cell = new Cell(id, x, y, s, name, color, skin, flags);
-                        cells.byId[id] = cell;
-                        cells.list.push(cell);
-                    }
+                    name = flags & 2 ? reader.getStringUTF8() : null;
+                    skin = flags & 4 ? reader.getStringUTF8() : null;
+                    item = new Cell(id, x, y, s, name, color, skin, type);
+                    cells.byId[id] = item;
+                    cells.list.push(item);
+                    if (flags & 1) cells.mine.push(id);
                 }
-                // dissapear records
-                count = reader.getUint16();
-                for (i = 0; i < count; i++) {
-                    killed = reader.getUint32();
-                    if (cells.byId.hasOwnProperty(killed) && !cells.byId[killed].destroyed)
-                        cells.byId[killed].destroy(null);
+                while (globalFlags & 128 && (id = reader.getUint32()) !== 0) {
+                    flags = reader.getUint8();
+                    x = flags & 1 ? reader.getInt32() : null;
+                    y = flags & 1 ? reader.getInt32() : null;
+                    s = flags & 2 ? reader.getUint16() : null;
+                    color = flags & 4 ? bytesToColor(reader.getUint8(), reader.getUint8(), reader.getUint8()) : null;
+                    name = flags & 8 ? reader.getStringUTF8() : null;
+                    skin = flags & 16 ? reader.getStringUTF8() : null;
+                    item = cells.byId[id];
+                    item.update(syncUpdStamp);
+                    item.updated = syncUpdStamp;
+                    x = x || item.nx;
+                    y = y || item.ny;
+                    s = s || item.ns;
+                    item.ox = item.x;
+                    item.oy = item.y;
+                    item.os = item.s;
+                    item.nx = x;
+                    item.ny = y;
+                    item.ns = s;
+                    if (color) item.setColor(color);
+                    if (skin) item.setSkin(skin);
+                    if (name) item.setName(name);
                 }
-                break;
-            case 0x11: // update pos
-                targetX = reader.getFloat32();
-                targetY = reader.getFloat32();
-                targetZ = reader.getFloat32();
-                break;
-            case 0x12: // clear all
-                for (var i in cells.byId)
-                    cells.byId[i].destroy(null);
-            case 0x14: // clear my cells
-                cells.mine = [];
-                break;
-            case 0x15: // draw line
-                log.warn("got packer 0x15 (draw line) which is unsupported");
-                break;
-            case 0x20: // new cell
-                cells.mine.push(reader.getUint32());
-                break;
-            case 0x30: // text list
-                leaderboard.items = [];
-                leaderboard.type = "text";
-
-                var count = reader.getUint32();
-                for (i = 0; i < count; ++i)
-                    leaderboard.items.push(reader.getStringUTF8());
-                drawLeaderboard();
-                break;
-            case 0x31: // ffa list
-                leaderboard.items = [];
-                leaderboard.type = "ffa";
-
-                var count = reader.getUint32();
-                for (i = 0; i < count; ++i)
-                    leaderboard.items.push({
-                        me: !!reader.getUint32(),
-                        name: reader.getStringUTF8() || "An unnamed cell"
-                    });
-                drawLeaderboard();
-                break;
-            case 0x32: // pie chart
-                leaderboard.items = [];
-                leaderboard.type = "pie";
-
-                var count = reader.getUint32();
-                for (i = 0; i < count; ++i)
-                    leaderboard.items.push(reader.getFloat32());
-                drawLeaderboard();
-                break;
-            case 0x40: // set border
-                border.left = reader.getFloat64();
-                border.top = reader.getFloat64();
-                border.right = reader.getFloat64();
-                border.bottom = reader.getFloat64();
-                border.width = border.right - border.left;
-                border.height = border.bottom - border.top;
-                border.centerX = (border.left + border.right) / 2;
-                border.centerY = (border.top + border.bottom) / 2;
-                if (data.data.byteLength === 33) break;
-                if (!mapCenterSet) {
-                    mapCenterSet = true;
-                    cameraX = targetX = border.centerX;
-                    cameraY = targetY = border.centerY;
-                    cameraZ = targetZ = 1;
+                while (globalFlags & 256 && (killed = reader.getUint32()) !== 0) {
+                    killer = reader.getUint32();
+                    if (!cells.byId.hasOwnProperty(killer) || !cells.byId.hasOwnProperty(killed))
+                        continue;
+                    cells.byId[killed].destroy(cells.byId[killer]);
                 }
-                reader.getUint32(); // game type
-                if (!/MultiOgar|OgarII/.test(reader.getStringUTF8()) || stats.pingLoopId) break;
-                stats.pingLoopId = setInterval(function() {
-                    wsSend(UINT8_CACHE[254]);
-                    stats.pingLoopStamp = Date.now();
-                }, 2000);
-                break;
-            case 0x63: // chat message
-                var flags = reader.getUint8();
-                var color = bytesToColor(reader.getUint8(), reader.getUint8(), reader.getUint8());
-                
-                var name = reader.getStringUTF8().trim();
-                var reg = /\{([\w]+)\}/.exec(name);
-                if (reg) name = name.replace(reg[0], "").trim();
-                var message = reader.getStringUTF8();
-
-                var server = !!(flags & 0x80),
-                    admin = !!(flags & 0x40),
-                    mod = !!(flags & 0x20);
-
-                if (server && name !== "SERVER") name = "[SERVER] " + name;
-                if (admin) name = "[ADMIN] " + name;
-                if (mod) name = "[MOD] " + name;
-                var wait = Math.max(3000, 1000 + message.length * 150);
-                chat.waitUntil = syncUpdStamp - chat.waitUntil > 1000 ? syncUpdStamp + wait : chat.waitUntil + wait;
-                chat.messages.push({
-                    server: server,
-                    admin: admin,
-                    mod: mod,
-                    color: color,
-                    name: name,
-                    message: message,
-                    time: syncUpdStamp
-                });
-                drawChat();
-                break;
-            case 0xFE: // server stat
-                stats.info = JSON.parse(reader.getStringUTF8());
-                stats.latency = syncUpdStamp - stats.pingLoopStamp;
-                drawStats();
+                while (globalFlags & 512 && (item = reader.getUint32()) !== 0) {
+                    item = cells.byId[item] || null;
+                    if (!item || item.destroyed) continue;
+                    item.destroy(null);
+                }
                 break;
             default:
-                // invalid packet
                 wsCleanup();
                 break;
         }
     }
     function sendMouseMove(x, y) {
         var writer = new Writer(true);
-        writer.setUint8(0x10);
+        writer.setUint8(0x03);
         writer.setUint32(x);
         writer.setUint32(y);
-        writer._b.push(0, 0, 0, 0);
+        writer.setUint8(sending.split);
+        writer.setUint8(sending.minionSplit);
+        sending.split = sending.minionSplit = 0;
+        var flags = 0;
+        if (sending.spawningName != null) flags |= 1;
+        if (sending.spectate) flags |= 2, sending.spectate = false;
+        if (sending.qPress) flags |= 4, sending.qPress = false;
+        if (sending.qRelease) flags |= 8, sending.qRelease = false;
+        if (sending.eject) flags |= 16, sending.eject = false;
+        if (sending.minionEject) flags |= 32, sending.minionEject = false;
+        if (sending.minionFreeze) flags |= 64, sending.minionFreeze = false;
+        if (sending.chatMessages.length > 0) flags |= 128;
+        writer.setUint8(flags);
+        if (flags & 1) {
+            writer.setStringUTF8(sending.spawningName);
+            sending.spawningName = null;
+        }
+        if (flags & 128) {
+            var l = sending.chatMessages.length;
+            writer.setUint8(l);
+            for (var i = 0; i < l; i++)
+                writer.setStringUTF8(sending.chatMessages[i]);
+            sending.chatMessages.splice(0, l);
+        }
         wsSend(writer);
     }
     function sendPlay(name) {
         log.debug("play trigger");
-        var writer = new Writer(true);
-        writer.setUint8(0x00);
-        writer.setStringUTF8(name);
-        wsSend(writer);
+        sending.spawningName = name;
     }
     function sendChat(text) {
-        var writer = new Writer();
-        writer.setUint8(0x63);
-        writer.setUint8(0);
-        writer.setStringUTF8(text);
-        wsSend(writer);
+        sending.chatMessages.push(text);
     }
 
     function gameReset() {
@@ -622,11 +630,12 @@
         var ctx = canvas.getContext("2d");
         ctx.font = "14px Ubuntu";
         var rows = [
-            `${stats.info.name} (${stats.info.mode})`,
-            `${stats.info.playersTotal} / ${stats.info.playersLimit} players`,
-            `${stats.info.playersAlive} playing`,
-            `${stats.info.playersSpect} spectating`,
-            `${(stats.info.update * 2.5).toFixed(1)}% load @ ${prettyPrintTime(stats.info.uptime)}`
+            `${stats.info.name} (${stats.info.gamemode})`,
+            `${stats.info.external} / ${stats.info.limit} players`,
+            `${stats.info.playing} playing`,
+            `${stats.info.spectating} spectating`,
+            `${stats.info.internal} bots`,
+            `${(stats.info.loadTime * 2.5).toFixed(1)}% load @ ${prettyPrintTime(stats.info.uptime)}`
         ];
         var width = 0;
         for (var i = 0; i < rows.length; i++)
@@ -887,7 +896,7 @@
         cameraZInvd = 1 / cameraZ;
     }
 
-    function Cell(id, x, y, s, name, color, skin, flags) {
+    function Cell(id, x, y, s, name, color, skin, type) {
         this.id = id;
         this.x = this.nx = this.ox = x;
         this.y = this.ny = this.oy = y;
@@ -895,8 +904,8 @@
         this.setColor(color);
         this.setName(name);
         this.setSkin(skin);
-        this.jagged = flags & 0x01 || flags & 0x10;
-        this.ejected = !!(flags & 0x20);
+        this.jagged = type === 2;
+        this.ejected = type === 3;
         this.born = syncUpdStamp;
     }
     Cell.prototype = {
@@ -1163,7 +1172,7 @@
         mainCanvas.focus();
         function handleScroll(event) {
             mouseZ *= Math.pow(.9, event.wheelDelta / -120 || event.detail || 0);
-            1 > mouseZ && (mouseZ = 1);
+            //1 > mouseZ && (mouseZ = 1);
             mouseZ > 4 / mouseZ && (mouseZ = 4 / mouseZ);
         }
         if (/firefox/i.test(navigator.userAgent))
@@ -1184,37 +1193,37 @@
                     break;
                 case 32: // space
                     if (isTyping || escOverlayShown || pressed.space) break;
-                    wsSend(UINT8_CACHE[17]);
+                    sending.split++;
                     pressed.space = true;
                     break;
                 case 87: // W
                     if (isTyping || escOverlayShown) break;
-                    wsSend(UINT8_CACHE[21]);
+                    sending.eject = true;
                     pressed.w = true;
                     break;
                 case 81: // Q
                     if (isTyping || escOverlayShown || pressed.q) break;
-                    wsSend(UINT8_CACHE[18]);
+                    sending.qPress = true;
                     pressed.q = true;
                     break;
                 case 69: // E
                     if (isTyping || escOverlayShown || pressed.e) break;
-                    wsSend(UINT8_CACHE[22]);
+                    sending.minionSplit++;
                     pressed.e = true;
                     break;
                 case 82: // R
                     if (isTyping || escOverlayShown || pressed.r) break;
-                    wsSend(UINT8_CACHE[23]);
+                    sending.minionEject = true;
                     pressed.r = true;
                     break;
                 case 84: // T
                     if (isTyping || escOverlayShown || pressed.t) break;
-                    wsSend(UINT8_CACHE[24]);
+                    sending.minionFreeze = true;
                     pressed.t = true;
                     break;
                 case 80: // P
                     if (isTyping || escOverlayShown || pressed.p) break;
-                    wsSend(UINT8_CACHE[25]);
+                    sending.minionPelletMode = true;
                     pressed.p = true;
                     break;
                 case 27: // esc
@@ -1234,7 +1243,7 @@
                     pressed.w = false;
                     break;
                 case 81: // Q
-                    if (pressed.q) wsSend(UINT8_CACHE[19]);
+                    if (pressed.q) sending.qRelease = true;
                     pressed.q = false;
                     break;
                 case 69: // E
@@ -1319,7 +1328,7 @@
         settings.showMinimap = !a;
     };
     wHandle.spectate = function(a) {
-        wsSend(UINT8_CACHE[1]);
+        sending.spectate = true;
         stats.maxScore = 0;
         hideESCOverlay();
     };
