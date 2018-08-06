@@ -357,7 +357,7 @@
                     killer = reader.getUint32();
                     if (!cells.byId.hasOwnProperty(killer) || !cells.byId.hasOwnProperty(killed))
                         continue;
-                    cells.byId[killed].destroy(cells.byId[killer]);
+                    cells.byId[killed].destroy(killer);
                 }
                 while (globalFlags & 512 && (item = reader.getUint32()) !== 0) {
                     item = cells.byId[item] || null;
