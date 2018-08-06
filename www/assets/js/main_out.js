@@ -291,7 +291,7 @@
                     switch (reader.getUint8()) {
                         case 1:
                             leaderboard.type = "ffa";
-                            var hitSelfData = false, position;
+                            var position;
                             while ((position = reader.getUint16()) !== 0) {
                                 flags = reader.getUint8();
                                 if (flags & 2) hitSelfData = true;
@@ -301,12 +301,6 @@
                                     name: reader.getStringUTF8()
                                 });
                             }
-                            if (!hitSelfData)
-                                leaderboard.items.push({
-                                    pos: reader.getStringUTF8(),
-                                    me: !!(reader.getUint8() & 1),
-                                    name: reader.getStringUTF8()
-                                });
                             break;
                         case 2:
                             leaderboard.type = "pie";
@@ -691,22 +685,19 @@
                 ctx.fill();
             }
         } else {
-            var text, isMe = false, w, start;
+            var text, pos, isMe = false, w, start;
             ctx.font = "20px Ubuntu";
             for (var i = 0; i < len; i++) {
                 if (leaderboard.type === "text")
                     text = leaderboard.items[i];
                 else
+                    pos = leaderboard.items[i].pos,
                     text = leaderboard.items[i].name,
                     isMe = leaderboard.items[i].me;
 
-                // replace {skin} with empty string
-                var reg = /\{([\w]+)\}/.exec(text);
-                if (reg) text = text.replace(reg[0], "").trim();
-
                 ctx.fillStyle = isMe ? "#FAA" : "#FFF";
                 if (leaderboard.type === "ffa")
-                    text = (i + 1) + ". " + (text || "An unnamed cell");
+                    text = pos + ". " + (text || "An unnamed cell");
                 var start = ((w = ctx.measureText(text).width) > 200) ? 2 : 100 - w * 0.5;
                 ctx.fillText(text, start, 70 + 24 * i);
             }
