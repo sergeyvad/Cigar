@@ -234,6 +234,10 @@
                     border.right = reader.getInt32();
                     border.top = reader.getInt32();
                     border.bottom = reader.getInt32();
+                    border.width = border.right - border.left;
+                    border.height = border.bottom - border.top;
+                    border.centerX = (border.left + border.right) / 2;
+                    border.centerY = (border.top + border.bottom) / 2;
                     if (!mapCenterSet) {
                         mapCenterSet = true;
                         cameraX = targetX = border.centerX;
